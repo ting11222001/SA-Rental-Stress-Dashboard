@@ -2,6 +2,7 @@ import os                        # reads environment variables (like passwords)
 import pandas as pd              # reads Excel files and shapes data into tables
 import snowflake.connector       # lets Python talk to Snowflake
 from dotenv import load_dotenv   # reads a .env file and puts values into environment variables
+from snowflake.connector.pandas_tools import write_pandas
 
 load_dotenv()  # runs immediately, loads your .env so os.getenv() can find your credentials
 
@@ -99,7 +100,7 @@ def parse_suburb(quarter, path):
     return data[["quarter", "suburb", "total_count", "total_median"]]
 
 # Test: Check if parse_suburb works on the first quarterly file
-# df = parse_suburb("2025-Q4", "data/private-rental-report-2025-12.xlsx")
+# df = parse_suburb("2025-Q1", "data/private-rental-report-2025-03.xlsx")
 # print(df.head(10))
 # print(df.shape)   # tells you (rows, columns)
 
@@ -134,24 +135,22 @@ def create_tables(cursor):
 # conn.close()
 
 
-def load_dataframe(cursor, df, table):
-    # itertuples() loops through each row of the dataframe. itertuples() returns each row as a named tuple, not a plain tuple. A named tuple looks like this: Pandas(quarter='2025-Q1', region='Eastern', total_count=120, total_median=530.0)
-    # index=False means don't include the row number
-    # tuple(row) converts each row into a plain tuple like ("2025-Q1", "Eastern", 120, 530.0) as The Snowflake connector's executemany expects plain tuples like ('2025-Q1', 'Eastern', 120, 530.0)
-    rows = [tuple(row) for row in df.itertuples(index=False)]
+def load_dataframe(conn, df, table):
+    # The suburb sheet replaces counts of 1 to 5 dwellings with a * symbol. 
+    # When pandas reads that, it cannot convert * to a number, so it stores NaN instead. This meant the data had NaN values that needed to become NULL in Snowflake.
+    # write_pandas handles NaN to NULL conversion internally, and it uses a COPY INTO command under the hood instead of row-by-row inserts, so it loads thousands of rows in one operation.
+    print(f"Loading data into {table}...")
+    df.columns = df.columns.str.upper()
+    success, nchunks, nrows, _ = write_pandas(
+        conn,
+        df,
+        table_name=table,
+        database="RENTAL_STRESS",
+        schema="RAW",
+    )
+    print(f"Loaded {nrows} rows. Success: {success}")
 
-    # count how many columns there are (4 in this case)
-    cols = len(df.columns)
-
-    # builds "%s, %s, %s, %s" which is one placeholder per column
-    # Snowflake uses %s as a safe way to insert values (prevents SQL injection)
-    placeholders = ", ".join(["%s"] * cols)
-
-    # executemany sends all rows in one call, more efficient than a loop of execute()
-    cursor.executemany(f"INSERT INTO {table} VALUES ({placeholders})", rows)
-    print("Data inserted.")
-
-# Test: Check if we can load a dataframe into Snowflake
+# Test: Check if we can load a region dataframe into Snowflake
 # pd.DataFrame() can accept a list of tuples as its data. Each tuple becomes one row. The columns argument gives names to each position.
 # test_df = pd.DataFrame([
 #     ("2025-Q1", "test", 1000, 1000)
@@ -161,3 +160,39 @@ def load_dataframe(cursor, df, table):
 # load_dataframe(cursor, test_df, "RENTAL_STRESS.RAW.RAW_REGION")
 # cursor.close()
 # conn.close()
+
+def main():
+    all_region = []   # empty list to collect dataframes from each quarter
+    all_suburb = []
+
+    for quarter, path in QUARTERLY_FILES:
+        print(f"Parsing {quarter} ...")
+        all_region.append(parse_region(quarter, path))   # parse and add to list
+        all_suburb.append(parse_suburb(quarter, path))
+
+    # concat stacks all 4 dataframes into one big dataframe
+    # ignore_index=True resets the row numbers (0, 1, 2...) on the combined table
+    region_df = pd.concat(all_region, ignore_index=True)
+    # Test: Check if the combined region dataframe looks correct and has 4 times the rows of one quarter's dataframe
+    # print(region_df.head(10))  # check the first 10 rows of the combined region dataframe
+
+    suburb_df = pd.concat(all_suburb, ignore_index=True)
+    # Test: Check if the combined suburb dataframe looks correct
+    # print(f"Suburb DataFrame (first 10 rows):\n{suburb_df.head(10)}")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    create_tables(cursor)   # creates fresh tables
+    load_dataframe(conn, region_df, "RAW_REGION")
+    load_dataframe(conn, suburb_df, "RAW_SUBURB")
+
+    cursor.close()
+    conn.close()
+    print("\nDone.")
+
+
+# this guard means: only run main() if this file is run directly
+# if another file imports this script, main() won't run automatically
+if __name__ == "__main__":
+    main()
