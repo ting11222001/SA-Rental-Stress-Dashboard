@@ -153,11 +153,11 @@ def load_dataframe(cursor, df, table):
 
 # Test: Check if we can load a dataframe into Snowflake
 # pd.DataFrame() can accept a list of tuples as its data. Each tuple becomes one row. The columns argument gives names to each position.
-test_df = pd.DataFrame([
-    ("2025-Q1", "test", 1000, 1000)
-], columns=["quarter", "region", "total_count", "total_median"])
-conn = get_connection()
-cursor = conn.cursor()
-load_dataframe(cursor, test_df, "RENTAL_STRESS.RAW.RAW_REGION")
-cursor.close()
-conn.close()
+# test_df = pd.DataFrame([
+#     ("2025-Q1", "test", 1000, 1000)
+# ], columns=["quarter", "region", "total_count", "total_median"])
+# conn = get_connection()
+# cursor = conn.cursor()
+# load_dataframe(cursor, test_df, "RENTAL_STRESS.RAW.RAW_REGION")
+# cursor.close()
+# conn.close()
