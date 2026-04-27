@@ -77,6 +77,12 @@ def transform_region(session):
 
 
 
+# ---------------------------------------------------------------------------
+# STEP 2: CLEAN THE SUBURB DATA
+# Read raw suburb rows, filter out low-count suburbs (fewer than 10 bonds
+# means the median is based on very few rentals and is not reliable).
+# ---------------------------------------------------------------------------
+
 def transform_suburb(session):
     df = session.table("RENTAL_STRESS.RAW.RAW_SUBURB")
 
