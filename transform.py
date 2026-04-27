@@ -99,7 +99,37 @@ def transform_suburb(session):
     df.write.save_as_table("RENTAL_STRESS.CLEAN.SUBURB_CLEAN", mode="overwrite")
     print(f"SUBURB_CLEAN written: {df.count()} rows")      # SUBURB_CLEAN written: 351 rows
 
+
+
+# ---------------------------------------------------------------------------
+# STEP 3: BUILD THE MART TABLES
+# Mart tables are the final, query-ready tables that the Streamlit dashboard
+# reads directly. They are simple selects from the clean layer.
+#
+# MART_REGION_STRESS  -> used by section 1 (trend) and section 3 (stress)
+# MART_SUBURB_TOP     -> used by section 2 (most expensive / affordable)
+# ---------------------------------------------------------------------------
+
+def build_marts(session):
+    # Mart 1: all region data across all quarters, ordered for the trend chart
+    region = session.table("RENTAL_STRESS.CLEAN.REGION_CLEAN")
+    # preview first
+    region.sort(col("QUARTER"), col("REGION")).show(5)
+
+    # Mart 2: top 10 most expensive and top 10 most affordable suburbs
+    suburb = session.table("RENTAL_STRESS.CLEAN.SUBURB_CLEAN")
+    # preview first
+    suburb.show(5)
+
+    top_expensive = suburb.sort(col("TOTAL_MEDIAN").desc()).limit(10)
+    top_affordable = suburb.sort(col("TOTAL_MEDIAN").asc()).limit(10)
+    # preview first
+    top_expensive.show(5)
+    # preview first
+    top_affordable.show(5)
+
+
 if __name__ == "__main__":
     session = get_session()
-    transform_suburb(session)
+    build_marts(session)
     session.close() 
