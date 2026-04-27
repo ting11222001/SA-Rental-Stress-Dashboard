@@ -67,9 +67,33 @@ def transform_region(session):
         .when(col("STRESS_PCT") > lit(25), lit("moderate"))
         .otherwise(lit("affordable"))
     )
-    df.show(10)  # preview only, no write yet
+
+    # preview only, no write yet
+    # df.show(10)
+
+    # Write to the CLEAN schema, replacing the table if it already exists
+    df.write.save_as_table("RENTAL_STRESS.CLEAN.REGION_CLEAN", mode="overwrite")
+    print(f"REGION_CLEAN written: {df.count()} rows")       # REGION_CLEAN written: 48 rows
+
+
+
+def transform_suburb(session):
+    df = session.table("RENTAL_STRESS.RAW.RAW_SUBURB")
+
+    # Keep only suburbs with at least 10 bonds lodged that quarter (the 1-5 dwellings are null now, but more than 5 and less than 10 are also unreliable)
+    df = df.filter(col("TOTAL_COUNT") >= lit(10))
+    df = df.filter(col("TOTAL_MEDIAN").is_not_null())
+    
+    # Only use Q4 2025 for the suburb affordability section
+    df = df.filter(col("QUARTER") == lit("2025-Q4"))
+    
+    # preview first
+    # df.show(10)
+
+    df.write.save_as_table("RENTAL_STRESS.CLEAN.SUBURB_CLEAN", mode="overwrite")
+    print(f"SUBURB_CLEAN written: {df.count()} rows")      # SUBURB_CLEAN written: 351 rows
 
 if __name__ == "__main__":
     session = get_session()
-    transform_region(session)
+    transform_suburb(session)
     session.close() 
