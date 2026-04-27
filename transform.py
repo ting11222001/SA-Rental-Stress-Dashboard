@@ -114,19 +114,31 @@ def build_marts(session):
     # Mart 1: all region data across all quarters, ordered for the trend chart
     region = session.table("RENTAL_STRESS.CLEAN.REGION_CLEAN")
     # preview first
-    region.sort(col("QUARTER"), col("REGION")).show(5)
+    # region.sort(col("QUARTER"), col("REGION")).show(5)
+    region.sort(col("QUARTER"), col("REGION")).write.save_as_table(
+        "RENTAL_STRESS.MART.MART_REGION_STRESS", mode="overwrite"
+    )
+    print(f"MART_REGION_STRESS written: {region.count()} rows")        # MART_REGION_STRESS written: 48 rows
 
     # Mart 2: top 10 most expensive and top 10 most affordable suburbs
     suburb = session.table("RENTAL_STRESS.CLEAN.SUBURB_CLEAN")
     # preview first
-    suburb.show(5)
+    # suburb.show(5)
 
     top_expensive = suburb.sort(col("TOTAL_MEDIAN").desc()).limit(10)
     top_affordable = suburb.sort(col("TOTAL_MEDIAN").asc()).limit(10)
     # preview first
-    top_expensive.show(5)
+    # top_expensive.show(5)
     # preview first
-    top_affordable.show(5)
+    # top_affordable.show(5)
+    top_expensive.write.save_as_table(
+        "RENTAL_STRESS.MART.MART_SUBURB_EXPENSIVE", mode="overwrite"
+    )
+    top_affordable.write.save_as_table(
+        "RENTAL_STRESS.MART.MART_SUBURB_AFFORDABLE", mode="overwrite"
+    )
+    print(f"MART_SUBURB_EXPENSIVE written: {top_expensive.count()} rows")        # MART_SUBURB_EXPENSIVE written: 10 rows
+    print(f"MART_SUBURB_AFFORDABLE written: {top_affordable.count()} rows")      # MART_SUBURB_AFFORDABLE written: 10 rows
 
 
 if __name__ == "__main__":
