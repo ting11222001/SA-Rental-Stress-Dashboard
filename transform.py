@@ -141,7 +141,27 @@ def build_marts(session):
     print(f"MART_SUBURB_AFFORDABLE written: {top_affordable.count()} rows")      # MART_SUBURB_AFFORDABLE written: 10 rows
 
 
-if __name__ == "__main__":
+# ---------------------------------------------------------------------------
+# MAIN
+# ---------------------------------------------------------------------------
+ 
+def main():
+    print("Connecting to Snowflake via Snowpark...")
     session = get_session()
+    print("Connected.\n")
+ 
+    print("Step 1: Transforming region data...")
+    transform_region(session)
+ 
+    print("\nStep 2: Transforming suburb data...")
+    transform_suburb(session)
+ 
+    print("\nStep 3: Building mart tables...")
     build_marts(session)
-    session.close() 
+ 
+    session.close()
+    print("\nDone.")
+ 
+ 
+if __name__ == "__main__":
+    main()

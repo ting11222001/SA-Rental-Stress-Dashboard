@@ -499,8 +499,429 @@ Parsing 2025-Q4 ...
 9  2025-Q1       Angle Park         25.0         600.0
 ```
 
-Then verify in Snowflake:
+Eventually it should print:
 ```
-SELECT COUNT(*) FROM RENTAL_STRESS.RAW.RAW_REGION;
-SELECT COUNT(*) FROM RENTAL_STRESS.RAW.RAW_SUBURB;
+Parsing 2025-Q1 ...
+Parsing 2025-Q2 ...
+Parsing 2025-Q3 ...
+Parsing 2025-Q4 ...
+Tables created.
+Loading data into RAW_REGION...
+Loaded 48 rows. Success: True
+Loading data into RAW_SUBURB...
+Loaded 2600 rows. Success: True
+
+Done.
+```
+
+Then verify in Snowflake by these SQL commands:
+```
+SHOW TABLES IN SCHEMA RENTAL_STRESS.RAW;
+SELECT * FROM RENTAL_STRESS.RAW.RAW_REGION;
+SELECT * FROM RENTAL_STRESS.RAW.RAW_SUBURB;
+```
+
+
+
+## Setup the transformation script
+
+Run:
+```
+python transform.py
+```
+
+### Test get_session
+
+Run:
+```
+def get_session():
+    return Session.builder.configs({
+        "account":   os.getenv("SNOWFLAKE_ACCOUNT"),
+        "user":      os.getenv("SNOWFLAKE_USER"),
+        "password":  os.getenv("SNOWFLAKE_PASSWORD"),
+        "warehouse": os.getenv("SNOWFLAKE_WAREHOUSE"),
+        "database":  os.getenv("SNOWFLAKE_DATABASE"),
+        "role":      os.getenv("SNOWFLAKE_ROLE"),
+    }).create()
+
+if __name__ == "__main__":
+    session = get_session()
+    print("Connected:", session.get_current_database())
+    session.close()
+```
+
+output:
+```
+Connected: "RENTAL_STRESS"
+```
+
+### Preveiw the raw table
+
+Run:
+```
+if __name__ == "__main__":
+    session = get_session()
+    df = session.table("RENTAL_STRESS.RAW.RAW_REGION")
+    df.show(5)
+    session.close()
+```
+
+output:
+```
+------------------------------------------------------------------
+|"QUARTER"  |"REGION"           |"TOTAL_COUNT"  |"TOTAL_MEDIAN"  |
+------------------------------------------------------------------
+|2025-Q1    |Northern Adelaide  |3445.0         |550.0           |
+|2025-Q1    |Western Adelaide   |2015.0         |570.0           |
+|2025-Q1    |Eastern Adelaide   |4905.0         |455.0           |
+|2025-Q1    |Southern Adelaide  |2320.0         |570.0           |
+|2025-Q1    |Adelaide Hills     |335.0          |590.0           |
+------------------------------------------------------------------
+```
+
+### Snowpark column functions
+
+Snowpark column functions
+One-liner: These are Snowpark's way of describing calculations on table columns in Python.
+Key points:
+
+- col() references a column, lit() wraps a raw value
+- Without lit(), Snowpark will throw an error when you mix Python numbers with column references
+- with_column() adds a new column without changing the existing ones
+
+Source/context:
+```
+from snowflake.snowpark.functions import col, lit, round as sp_round, when
+
+df = df.with_column(
+    "STRESS_PCT",
+    sp_round((col("TOTAL_MEDIAN") / lit(MEDIAN_INCOME_WEEKLY)) * lit(100), 1)
+)
+```
+
+In plain English: add a new column called STRESS_PCT (aka Stress Percentage) to the table, where each row's value is:
+```
+(median rent for that region / 1889) * 100, rounded to 1 decimal place.
+```
+
+So if median rent is $570, the result is (570 / 1889) * 100 = 30.2.
+
+The 1 at the end of sp_round(..., 1) means round to 1 decimal place.
+
+### Chained when() in Snowpark
+
+One-liner: Chaining .when() is the Snowpark way of writing if / else if / else inside a column calculation.
+Key points:
+
+The first when() is the "if"
+Each extra .when() chained on is an "else if"
+.otherwise() is the "else" and must come last
+Snowflake checks conditions in order and stops at the first match
+
+Source/context:
+```
+when(col("STRESS_PCT") > lit(30), lit("high stress"))
+    .when(col("STRESS_PCT") > lit(25), lit("moderate"))
+    .otherwise(lit("affordable"))
+```
+
+It is a chain of if / else if / else.
+In plain English:
+
+- If STRESS_PCT is above 30, use "high stress"
+- Else if STRESS_PCT is above 25, use "moderate"
+- Otherwise, use "affordable"
+
+The same logic in plain Python would be:
+```
+if stress_pct > 30:
+    return "high stress"
+elif stress_pct > 25:
+    return "moderate"
+else:
+    return "affordable"
+```
+
+Each .when() you chain adds another "else if". .otherwise() is always the final "else" at the end.
+
+### Test transform_region
+
+Run:
+```
+
+MEDIAN_INCOME_WEEKLY = 1889
+
+def transform_region(session):
+    df = session.table("RENTAL_STRESS.RAW.RAW_REGION")
+    df = df.filter(col("TOTAL_MEDIAN").is_not_null())   # col("NAME") means use this column in my calculation
+    df = df.filter(col("TOTAL_COUNT").is_not_null())
+    df = df.with_column(
+        "STRESS_PCT",
+        sp_round((col("TOTAL_MEDIAN") / lit(MEDIAN_INCOME_WEEKLY)) * lit(100), 1)  # round as sp_round rounds a number to X decimal places. Renamed to sp_round to avoid clashing with Python's built-in round()
+    )
+    df = df.with_column(
+        "STRESSED",
+        when(col("STRESS_PCT") > lit(30), lit(True)).otherwise(lit(False))  # lit(value) wraps a plain Python value (a number, a string) so Snowpark understands it.
+    )
+    df = df.with_column(
+        "STRESS_LABEL",
+        when(col("STRESS_PCT") > lit(30), lit("high stress"))       # when(condition, value) likes an if/else. "When this is true, use this value."
+        .when(col("STRESS_PCT") > lit(25), lit("moderate"))
+        .otherwise(lit("affordable"))
+    )
+    df.show(10)  # preview only, no write yet
+
+if __name__ == "__main__":
+    session = get_session()
+    transform_region(session)
+    session.close() 
+```
+
+output:
+```
+---------------------------------------------------------------------------------------------------------------
+|"QUARTER"  |"REGION"           |"TOTAL_COUNT"  |"TOTAL_MEDIAN"  |"STRESS_PCT"  |"STRESSED"  |"STRESS_LABEL"  |
+---------------------------------------------------------------------------------------------------------------
+|2025-Q1    |Northern Adelaide  |3445.0         |550.0           |29.1          |False       |moderate        |
+|2025-Q1    |Western Adelaide   |2015.0         |570.0           |30.2          |True        |high stress     |
+|2025-Q1    |Eastern Adelaide   |4905.0         |455.0           |24.1          |False       |affordable      |
+|2025-Q1    |Southern Adelaide  |2320.0         |570.0           |30.2          |True        |high stress     |
+|2025-Q1    |Adelaide Hills     |335.0          |590.0           |31.2          |True        |high stress     |
+|2025-Q1    |Fleurieu and KI    |245.0          |490.0           |25.9          |False       |moderate        |
+|2025-Q1    |Eyre and Western   |455.0          |350.0           |18.5          |False       |affordable      |
+|2025-Q1    |Far North          |220.0          |330.0           |17.5          |False       |affordable      |
+|2025-Q1    |Barossa            |380.0          |525.0           |27.8          |False       |moderate        |
+|2025-Q1    |Murray and Mallee  |400.0          |405.0           |21.4          |False       |affordable      |
+---------------------------------------------------------------------------------------------------------------
+```
+
+### Test transform_suburb
+
+Run:
+```
+def transform_suburb(session):
+    df = session.table("RENTAL_STRESS.RAW.RAW_SUBURB")
+
+    # Keep only suburbs with at least 10 bonds lodged that quarter (the 1-5 dwellings are null now, but more than 5 and less than 10 are also unreliable)
+    df = df.filter(col("TOTAL_COUNT") >= lit(10))
+    df = df.filter(col("TOTAL_MEDIAN").is_not_null())
+    
+    # Only use Q4 2025 for the suburb affordability section
+    df = df.filter(col("QUARTER") == lit("2025-Q4"))
+    df.show(10)  # preview first
+
+if __name__ == "__main__":
+    session = get_session()
+    transform_suburb(session)
+    session.close() 
+```
+
+output:
+```
+----------------------------------------------------------------
+|"QUARTER"  |"SUBURB"         |"TOTAL_COUNT"  |"TOTAL_MEDIAN"  |
+----------------------------------------------------------------
+|2025-Q4    |Aberfoyle Park   |25.0           |630.0           |
+|2025-Q4    |Adelaide         |1050.0         |514.5           |
+|2025-Q4    |Albert Park      |15.0           |600.0           |
+|2025-Q4    |Alberton         |10.0           |520.0           |
+|2025-Q4    |Aldinga Beach    |80.0           |577.5           |
+|2025-Q4    |Allenby Gardens  |15.0           |640.0           |
+|2025-Q4    |Andrews Farm     |105.0          |550.0           |
+|2025-Q4    |Angle Vale       |60.0           |625.0           |
+|2025-Q4    |Ascot Park       |40.0           |555.0           |
+|2025-Q4    |Ashford          |15.0           |635.0           |
+----------------------------------------------------------------
+```
+
+So only Q4 2025 rows appear and that all have TOTAL_COUNT >= 10.
+
+### Double check on the tables e.g. RENTAL_STRESS.CLEAN.SUBURB_CLEAN
+
+To check all the schemas the database, RENTAL_STRESS, has:
+```
+SHOW SCHEMAS IN DATABASE RENTAL_STRESS;
+```
+
+The tables for the CLEAN schema:
+```
+SHOW TABLES IN SCHEMA RENTAL_STRESS.CLEAN;
+```
+
+The two tables:
+```
+created_on,name,database_name,schema_name,kind
+2026-04-27 06:07:38.030 -0700,REGION_CLEAN,RENTAL_STRESS,CLEAN,TABLE
+2026-04-27 06:13:57.313 -0700,SUBURB_CLEAN,RENTAL_STRESS,CLEAN,TABLE
+```
+
+To check the content:
+```
+SELECT * FROM RENTAL_STRESS.CLEAN.REGION_CLEAN;
+
+SELECT * FROM RENTAL_STRESS.CLEAN.SUBURB_CLEAN;
+```
+
+### Test build_marts
+
+Run:
+```
+def build_marts(session):
+    # Mart 1: all region data across all quarters, ordered for the trend chart
+    region = session.table("RENTAL_STRESS.CLEAN.REGION_CLEAN")
+    region.sort(col("QUARTER"), col("REGION")).show(5)  # preview first
+
+
+if __name__ == "__main__":
+    session = get_session()
+    build_marts(session)
+    session.close() 
+```
+
+output for the region preview:
+```
+--------------------------------------------------------------------------------------------------------------
+|"QUARTER"  |"REGION"          |"TOTAL_COUNT"  |"TOTAL_MEDIAN"  |"STRESS_PCT"  |"STRESSED"  |"STRESS_LABEL"  |
+--------------------------------------------------------------------------------------------------------------
+|2025-Q1    |Adelaide Hills    |335.0          |590.0           |31.2          |True        |high stress     |
+|2025-Q1    |Barossa           |380.0          |525.0           |27.8          |False       |moderate        |
+|2025-Q1    |Eastern Adelaide  |4905.0         |455.0           |24.1          |False       |affordable      |
+|2025-Q1    |Eyre and Western  |455.0          |350.0           |18.5          |False       |affordable      |
+|2025-Q1    |Far North         |220.0          |330.0           |17.5          |False       |affordable      |
+--------------------------------------------------------------------------------------------------------------
+```
+
+Run:
+```
+def build_marts(session):
+    # Mart 1: all region data across all quarters, ordered for the trend chart
+    region = session.table("RENTAL_STRESS.CLEAN.REGION_CLEAN")
+    region.sort(col("QUARTER"), col("REGION")).show(5)  # preview first
+
+    # Mart 2: top 10 most expensive and top 10 most affordable suburbs
+    suburb = session.table("RENTAL_STRESS.CLEAN.SUBURB_CLEAN")
+    suburb.show(5)  # preview first
+
+
+if __name__ == "__main__":
+    session = get_session()
+    build_marts(session)
+    session.close() 
+```
+
+output for the suburb preview:
+```
+---------------------------------------------------------------
+|"QUARTER"  |"SUBURB"        |"TOTAL_COUNT"  |"TOTAL_MEDIAN"  |
+---------------------------------------------------------------
+|2025-Q4    |Aberfoyle Park  |25.0           |630.0           |
+|2025-Q4    |Adelaide        |1050.0         |514.5           |
+|2025-Q4    |Albert Park     |15.0           |600.0           |
+|2025-Q4    |Alberton        |10.0           |520.0           |
+|2025-Q4    |Aldinga Beach   |80.0           |577.5           |
+---------------------------------------------------------------
+```
+
+Run:
+```
+def build_marts(session):
+    # Mart 1: all region data across all quarters, ordered for the trend chart
+    region = session.table("RENTAL_STRESS.CLEAN.REGION_CLEAN")
+    # preview first
+    region.sort(col("QUARTER"), col("REGION")).show(5)
+
+    # Mart 2: top 10 most expensive and top 10 most affordable suburbs
+    suburb = session.table("RENTAL_STRESS.CLEAN.SUBURB_CLEAN")
+    # preview first
+    suburb.show(5)
+
+    top_expensive = suburb.sort(col("TOTAL_MEDIAN").desc()).limit(10)
+    top_affordable = suburb.sort(col("TOTAL_MEDIAN").asc()).limit(10)
+    # preview first
+    top_expensive.show(5)
+    # preview first
+    top_affordable.show(5)
+
+
+if __name__ == "__main__":
+    session = get_session()
+    build_marts(session)
+    session.close() 
+```
+
+output for the top_expensive and top_affordable preview:
+```
+----------------------------------------------------------
+|"QUARTER"  |"SUBURB"   |"TOTAL_COUNT"  |"TOTAL_MEDIAN"  |
+----------------------------------------------------------
+|2025-Q4    |Gilberton  |10.0           |842.5           |
+|2025-Q4    |Beaumont   |10.0           |835.0           |
+|2025-Q4    |Mitcham    |15.0           |807.5           |
+|2025-Q4    |Stepney    |10.0           |797.5           |
+|2025-Q4    |Malvern    |10.0           |780.0           |
+----------------------------------------------------------
+
+------------------------------------------------------------------
+|"QUARTER"  |"SUBURB"           |"TOTAL_COUNT"  |"TOTAL_MEDIAN"  |
+------------------------------------------------------------------
+|2025-Q4    |Port Pirie         |30.0           |227.5           |
+|2025-Q4    |Darlington         |15.0           |240.0           |
+|2025-Q4    |Coober Pedy        |15.0           |250.0           |
+|2025-Q4    |Middle Beach       |11.0           |260.0           |
+|2025-Q4    |Salisbury Heights  |15.0           |280.0           |
+------------------------------------------------------------------
+```
+
+### Double check the table e.g. RENTAL_STRESS.MART.MART_REGION_STRESS
+
+Run:
+```
+SELECT * FROM RENTAL_STRESS.MART.MART_REGION_STRESS;
+SELECT * FROM RENTAL_STRESS.MART.MART_SUBURB_EXPENSIVE;
+SELECT * FROM RENTAL_STRESS.MART.MART_SUBURB_AFFORDABLE;
+```
+
+### Final test on all the functions in the transform.py
+
+Run:
+```
+def main():
+    print("Connecting to Snowflake via Snowpark...")
+    session = get_session()
+    print("Connected.\n")
+ 
+    print("Step 1: Transforming region data...")
+    transform_region(session)
+ 
+    print("\nStep 2: Transforming suburb data...")
+    transform_suburb(session)
+ 
+    print("\nStep 3: Building mart tables...")
+    build_marts(session)
+ 
+    session.close()
+    print("\nDone.")
+ 
+ 
+if __name__ == "__main__":
+    main()
+```
+
+output:
+```
+Connecting to Snowflake via Snowpark...
+Connected.
+
+Step 1: Transforming region data...
+REGION_CLEAN written: 48 rows
+
+Step 2: Transforming suburb data...
+SUBURB_CLEAN written: 351 rows
+
+Step 3: Building mart tables...
+MART_REGION_STRESS written: 48 rows
+MART_SUBURB_EXPENSIVE written: 10 rows
+MART_SUBURB_AFFORDABLE written: 10 rows
+
+Done.
 ```
