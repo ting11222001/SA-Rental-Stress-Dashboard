@@ -132,3 +132,32 @@ def create_tables(cursor):
 # create_tables(cursor)
 # cursor.close()
 # conn.close()
+
+
+def load_dataframe(cursor, df, table):
+    # itertuples() loops through each row of the dataframe. itertuples() returns each row as a named tuple, not a plain tuple. A named tuple looks like this: Pandas(quarter='2025-Q1', region='Eastern', total_count=120, total_median=530.0)
+    # index=False means don't include the row number
+    # tuple(row) converts each row into a plain tuple like ("2025-Q1", "Eastern", 120, 530.0) as The Snowflake connector's executemany expects plain tuples like ('2025-Q1', 'Eastern', 120, 530.0)
+    rows = [tuple(row) for row in df.itertuples(index=False)]
+
+    # count how many columns there are (4 in this case)
+    cols = len(df.columns)
+
+    # builds "%s, %s, %s, %s" which is one placeholder per column
+    # Snowflake uses %s as a safe way to insert values (prevents SQL injection)
+    placeholders = ", ".join(["%s"] * cols)
+
+    # executemany sends all rows in one call, more efficient than a loop of execute()
+    cursor.executemany(f"INSERT INTO {table} VALUES ({placeholders})", rows)
+    print("Data inserted.")
+
+# Test: Check if we can load a dataframe into Snowflake
+# pd.DataFrame() can accept a list of tuples as its data. Each tuple becomes one row. The columns argument gives names to each position.
+test_df = pd.DataFrame([
+    ("2025-Q1", "test", 1000, 1000)
+], columns=["quarter", "region", "total_count", "total_median"])
+conn = get_connection()
+cursor = conn.cursor()
+load_dataframe(cursor, test_df, "RENTAL_STRESS.RAW.RAW_REGION")
+cursor.close()
+conn.close()
