@@ -38,15 +38,29 @@ session = get_session()
 st.set_page_config(page_title="SA Rental Stress", layout="wide")
 
 st.title("SA Rental Stress Dashboard")
-st.caption("Data: SA Government Private Rental Report (latest until 2025 Q4) · Income baseline: ABS 2021 median $1,889/wk")
+st.caption("Data: SA Government Private Rental Report (latest until 2025 Q4)· Income baseline: ABS 2021 median $1,889/wk")
 
 # session = get_active_session()
 
 
 # ---------------------------------------------------------------------------
+# GLOBAL STYLES
+# Sets a consistent base font size for Streamlit text elements outside Plotly.
+# Caption and badge text are nudged up so they match the chart label size.
+# ---------------------------------------------------------------------------
+
+st.markdown("""
+    <style>
+    .stCaption { font-size: 14px; }
+    [data-testid="stMarkdownContainer"] span { font-size: 15px; }
+    </style>
+""", unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------------------
 # SHARED LAYOUT CONFIG
-# Applied to every Plotly chart so height and margins are consistent.
-# Change height here to update all charts at once.
+# Applied to every Plotly chart so height, margins, and font are consistent.
+# Change values here to update all charts at once.
 # ---------------------------------------------------------------------------
 
 base_layout = dict(
@@ -126,7 +140,7 @@ col1, col2 = st.columns(2)
 
 with col1:
     st.markdown("**Top 10 most expensive suburbs**")
-    # Sort descending so the most expensive suburb appears at the top
+    # Sort ascending so Plotly renders highest value at the top
     exp = expensive_df[["suburb", "total_median"]].sort_values("total_median", ascending=True)
     fig = px.bar(exp, x="total_median", y="suburb", orientation="h", color_discrete_sequence=["#e67e22"])
     fig.update_layout(
@@ -138,7 +152,7 @@ with col1:
 
 with col2:
     st.markdown("**Top 10 most affordable suburbs**")
-    # Sort ascending so the cheapest suburb appears at the top
+    # Sort descending so Plotly renders lowest value at the top
     aff = affordable_df[["suburb", "total_median"]].sort_values("total_median", ascending=False)
     fig = px.bar(aff, x="total_median", y="suburb", orientation="h", color_discrete_sequence=["#2ecc71"])
     fig.update_layout(
@@ -206,7 +220,7 @@ with col_chart:
         xaxis_ticksuffix="%",
         showlegend=False,
     )
-    fig.update_traces(hovertemplate="%{y}: %{x:.1%}<extra></extra>")
+    fig.update_traces(hovertemplate="%{y}: %{x:.1f}%<extra></extra>")
     st.plotly_chart(fig, use_container_width=True)
 
 with col_table:
