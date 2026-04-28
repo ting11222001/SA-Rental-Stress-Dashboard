@@ -23,11 +23,11 @@ Inside Snowflake, create a Streamlit app that reads from MART and shows: 3 metri
 
 ## Dashboard Design
 
-Section 1 (trend): This needs multiple quarterly files loaded. It requires more ingestion work. This is the hardest part.
+Section 1: trend - Line chart always shows all 4 quarters at once. No dropdown. Simpler.
 
-Section 2 (most expensive / affordable suburbs): This comes from the Suburb sheet of a single file. Straightforward.
+Section 2: suburbs - Top 10 expensive / affordable (always 2025-Q4).
 
-Section 3 (rental stress by region): This comes from the Region sheet. Also straightforward.
+Section 3: rental stress - Stress % by region (always 2025-Q4).
 
 ### Version 1
 
@@ -925,3 +925,7 @@ MART_SUBURB_AFFORDABLE written: 10 rows
 
 Done.
 ```
+
+## Setup streamlit.py for building streamlit app
+
+To test the script locally, swap the session line for a local connector, then run it normally with `streamlit run streamlit.py`.
